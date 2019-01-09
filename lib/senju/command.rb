@@ -1,110 +1,58 @@
-require "ap"
-require "colorize"
-require "tty-markdown"
-require "rumoji"
-require "senju/diff"
-require "senju/init"
+require "senju/print"
 require "senju/track"
 
-COLORS = %w{green blue light_blue}
-
-def link_to(text, url)
-  "\e]8;;#{url}\e\\#{text}\e]8;;\e\\"
-end
-
-def print_issue(issue)
-  print link_to("##{issue.no} ".colorize(:blue).bold, issue.url) + issue.title
-  if issue.labels.length != 0
-    issue.labels.each do |label|
-      print " [#{label}]".colorize(:light_blue)
-    end
-  end
-  print "\n"
-end
-
-def exec(repo, command, option)
-  puts "================= #{repo.name} ====================".colorize(:green).bold
-
-  if command.to_i != 0
-    issue = repo.issue(command.to_i)
-    print_issue issue
-    puts "Opened by #{issue.owner} at #{issue.created_at}"
-
-    puts "\n" + Rumoji.decode(TTY::Markdown.parse(issue.body))
-
-    if option == "-v" || option == "comments"
-      repo.comments(command.to_i).each do |comment|
-        #color = COLORS[comment.owner[0].ord % 3]
-        puts "\nComment: #{comment.owner} at #{comment.created_at}".bold
-        puts Rumoji.decode(TTY::Markdown.parse(comment.body))
-      end
-    elsif option == "diff"
-      repo.changes(command.to_i).each do |change|
-        puts "\n#{change.filename}".bold
-        puts Senju::Diff.print(change.patch)
-      end
-    end
-
-    return
+class Senju::Command
+  def self.init
+      Dir.mkdir Dir.home + "/.senju"
+      puts "Create ~/.senju directory".colorize(:green)
   end
 
-  case command
-  when "issues"
-    repo.issues.each do |issue|
-      print_issue(issue)
-    end
-  when "mr"
-    command = option
-    option = ARGV[3]
-    issue = repo.pull_request(command.to_i)
-    print_issue issue
-    puts "Opened by #{issue.owner} at #{issue.created_at}"
+  def self.add(name)
+    Senju::Projects.add_interactive(args.first)
+  end
 
-    puts "\n" + Rumoji.decode(TTY::Markdown.parse(issue.body))
+  def self.track(name, issue_no)
+    Senju::Track.add(name, issue_no)
+    print "Track issue successfly.\n".colorize(:green)
+  end
 
-    if option == "-v" || option == "comments"
-      repo.comments(command.to_i).each do |comment|
-        #color = COLORS[comment.owner[0].ord % 3]
-        puts "\nComment: #{comment.owner} at #{comment.created_at}".bold
-        puts Rumoji.decode(TTY::Markdown.parse(comment.body))
+  def self.start(name, issue_no)
+    Senju::Track.status(name, issue_no, "doing")
+  end
+
+  def self.done(name, issue_no)
+    Senju::Track.erase(args.first, args[1])
+    print "Done issue #{args.first} #{args[1]}.\n".colorize(:green)
+  end
+
+  def self.exec(command, args)
+    args ||= []
+
+    case command
+    when "init"       then init
+    when "add"        then add(args.first)
+    when "track", "t" then track(args.first, args[1].to_i)
+    when "start"      then start(args.first, args[1].to_i)
+    when "done"       then done(args.first, args[1].to_i)
+
+    when "tracks"
+      Senju::Track.all.each do |project, issues|
+        repo = Senju::Repository.find(project)
+        issues.each do |issue, data|
+          Senju::Print.exec(repo, issue, "-v")
+        end
       end
-    elsif option == "diff"
-      repo.changes(command.to_i).each do |change|
-        puts "\n#{change.filename}".bold
-        puts Senju::Diff.print(change.patch)
+
+    else
+      if command
+        Senju::Print.exec(Senju::Repository.find(command), args.first, args[1])
+      else
+        Senju::Repository.all.each do |repo|
+          Senju::Print.exec(repo)
+        end
       end
-    end
-  when "pr"
-    repo.pull_requests.each do |issue|
-      print_issue(issue)
     end
   end
 end
 
-repo = ARGV[0]
-command = ARGV[1] || "issues"
-option = ARGV[2]
-
-if ARGV[0] == "init"
-  Senju.init
-elsif ARGV[0] == "add"
-  Senju::Projects.add_interactive(ARGV[1])
-elsif ARGV[0] == "track" or ARGV[0] == "t"
-  Senju::Track.add(ARGV[1], ARGV[2])
-  print "Track issue successfly.\n".colorize(:green)
-
-elsif ARGV[0] == "tracks"
-  Senju::Track.all.each do |project, issues|
-    repo = Senju::Repository.find(project)
-    issues.each do |issue, data|
-      exec(repo, issue, "-v")
-    end
-  end
-
-elsif repo
-  exec(Senju::Repository.find(repo), command, option)
-else
-  Senju::Repository.all.each do |repo|
-    exec(repo, command, option)
-  end
-end
+Senju::Command.exec(ARGV[0], ARGV[1..-1])
